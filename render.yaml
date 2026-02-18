@@ -7,4 +7,4 @@ services:
       pip install -r requirements.txt
       apt-get update
       apt-get install -y ffmpeg
-    startCommand: uvicorn Hosted_WS_APP:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn Hosted_WS_APP:app --host 0.0.0.0 --port ${PORT:-8000}
