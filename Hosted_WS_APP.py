@@ -9,7 +9,7 @@ import uvicorn
 app = FastAPI(title="Whisper Transcription API")
 
 print("Loading Whisper model...")
-model = whisper.load_model("base")
+model = whisper.load_model("tiny")
 print("Model ready.")
 
 @app.post("/transcribe")
