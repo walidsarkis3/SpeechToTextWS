@@ -1,10 +1,12 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import whisper
 import tempfile
 import os
 import traceback
 import uvicorn
+
 
 app = FastAPI(title="Whisper Transcription API")
 
