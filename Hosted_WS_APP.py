@@ -9,44 +9,84 @@ import uvicorn
 app = FastAPI(title="Whisper Transcription API")
 
 print("Loading Whisper model...")
-model = whisper.load_model("tiny")
+model = whisper.load_model("base")
 print("Model ready.")
 
+class Base64Audio(BaseModel):
+    filename: str
+    audio_base64: str
+
+
 @app.post("/transcribe")
-async def transcribe_audio(file: UploadFile = File(...)):
-    tmp_path = None
+async def transcribe_audio(payload: Base64Audio):
+    input_path = None
+    converted_path = None
 
     try:
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No file uploaded")
+        if not payload.audio_base64:
+            raise HTTPException(status_code=400, detail="No audio data")
 
-        # Save uploaded file safely
-        suffix = os.path.splitext(file.filename)[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-            tmp_path = tmp.name
-            contents = await file.read()
-            tmp.write(contents)
-            tmp.flush()
-            os.fsync(tmp.fileno())
+        # ---- 1) Decode Base64 ----
+        try:
+            audio_bytes = base64.b64decode(payload.audio_base64)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid base64 audio")
 
-        if os.path.getsize(tmp_path) == 0:
-            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        # ---- 2) Save original file ----
+        suffix = os.path.splitext(payload.filename)[1] or ".webm"
 
-        # Direct transcription (no manual WAV conversion)
-        result = model.transcribe(tmp_path)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+            input_path = f.name
+            f.write(audio_bytes)
+            f.flush()
+            os.fsync(f.fileno())
+
+        if os.path.getsize(input_path) == 0:
+            raise HTTPException(status_code=400, detail="Decoded file is empty")
+
+        # ---- 3) Convert to MP3 using ffmpeg ----
+        converted_path = input_path + ".mp3"
+
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-i", input_path,
+            "-vn",
+            "-acodec", "libmp3lame",
+            "-ar", "16000",
+            "-ac", "1",
+            converted_path
+        ]
+
+        process = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+
+        if process.returncode != 0:
+            print(process.stderr.decode())
+            raise HTTPException(status_code=500, detail="Audio conversion failed (ffmpeg)")
+
+        # ---- 4) Transcribe with Whisper ----
+        result = model.transcribe(converted_path)
 
         return JSONResponse({
-            "filename": file.filename,
+            "filename": payload.filename,
             "language": result.get("language"),
-            "duration_estimate": len(result.get("segments", [])),
             "text": result.get("text"),
-            "segments": result.get("segments")
+            "segments": result.get("segments"),
+            "duration_estimate": len(result.get("segments", []))
         })
 
     except Exception as e:
         traceback.print_exc()
-        return JSONResponse(status_code=500, content={"error": "Internal server error", "details": str(e)})
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Internal server error", "details": str(e)}
+        )
 
     finally:
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        for path in [input_path, converted_path]:
+            if path and os.path.exists(path):
+                os.remove(path)
